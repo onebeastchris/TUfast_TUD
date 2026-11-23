@@ -42,7 +42,7 @@ jobs:
           xcrun "$tool" build \
             --project-location xcode \
             --app-name TUfast \
-            --bundle-identifier io.github.tufast.ipad \
+            --bundle-identifier io.github.tufast.TUfast \
             --ios-only --swift --copy-resources \
             --no-open --no-prompt --force
           find xcode -maxdepth 3 -name '*.xcodeproj'
