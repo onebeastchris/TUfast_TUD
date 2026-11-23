@@ -16,8 +16,51 @@ async function hashDigest(str: string) {
   return await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
 }
 
+function keyStoreRequest<T>(
+  db: IDBDatabase,
+  mode: 'readonly' | 'readwrite',
+  run: (store: IDBObjectStore) => IDBRequest<T>
+) {
+  return new Promise<T>((resolve, reject) => {
+    const tx = db.transaction('keys', mode)
+    const request = run(tx.objectStore('keys'))
+    tx.oncomplete = () => resolve(request.result)
+    tx.onerror = tx.onabort = () => reject(tx.error ?? request.error)
+  })
+}
+
+// random non-extractable key kept in IndexedDB, for browsers without chrome.system.cpu (Safari)
+async function getStoredKey(): Promise<CryptoKey> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('tufast-credentials', 1)
+    request.onupgradeneeded = () => request.result.createObjectStore('keys')
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+
+  try {
+    const existing = await keyStoreRequest<CryptoKey | undefined>(db, 'readonly', (store) => store.get('udata'))
+    if (existing) return existing
+
+    const key = await crypto.subtle.generateKey({ name: 'AES-CBC', length: 256 }, false, ['encrypt', 'decrypt'])
+    try {
+      await keyStoreRequest(db, 'readwrite', (store) => store.add(key, 'udata'))
+      return key
+    } catch {
+      // a concurrent call stored its key first, use that one
+      const stored = await keyStoreRequest<CryptoKey | undefined>(db, 'readonly', (store) => store.get('udata'))
+      if (!stored) throw new Error('Could not store encryption key')
+      return stored
+    }
+  } finally {
+    db.close()
+  }
+}
+
 // get key for encryption
 async function getKeyBuffer() {
+  if (!isFirefox() && !chrome.system?.cpu) return await getStoredKey()
+
   // async fetch of system information
   let sysInfo: string = ''
 

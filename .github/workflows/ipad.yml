@@ -1,0 +1,76 @@
+# Builds an unsigned iOS/iPadOS app containing TUfast as a Safari Web Extension.
+# No signing happens here and no secrets are used: sign and install the .ipa locally with AltStore/SideStore.
+
+name: iPad build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ccr-bd68bd95-h3v8ak
+      - ipad
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run useSafari
+      # includes the extension build into build/
+      - run: npm run test
+
+      - name: Generate Xcode project
+        run: |
+          xcodebuild -version
+          if xcrun --find safari-web-extension-packager >/dev/null 2>&1; then
+            tool=safari-web-extension-packager
+          else
+            tool=safari-web-extension-converter
+          fi
+          xcrun "$tool" build \
+            --project-location xcode \
+            --app-name TUfast \
+            --bundle-identifier io.github.tufast.ipad \
+            --ios-only --swift --copy-resources \
+            --no-open --no-prompt --force
+          find xcode -maxdepth 3 -name '*.xcodeproj'
+
+      - name: Build unsigned app
+        run: |
+          project=$(find xcode -maxdepth 3 -name '*.xcodeproj' | head -1)
+          xcodebuild -list -project "$project"
+          xcodebuild -project "$project" -scheme TUfast -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath derived \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+
+      - name: Package and check IPA
+        run: |
+          app=$(find derived/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)
+          appex=$(find "$app/PlugIns" -maxdepth 1 -name '*.appex' | head -1)
+          test -n "$appex" || { echo "Safari extension (.appex) missing from app"; exit 1; }
+          find "$appex" -name manifest.json | grep -q . || { echo "manifest.json missing from extension"; exit 1; }
+          if find "$appex" -name manifest.json -exec grep -l '"system.cpu"' {} + | grep -q .; then
+            echo "Chrome manifest was packaged instead of the Safari one"; exit 1
+          fi
+          mkdir Payload
+          cp -R "$app" Payload/
+          zip -qry TUfast-ipad.ipa Payload
+          ls -l TUfast-ipad.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TUfast-ipad
+          path: TUfast-ipad.ipa
+          retention-days: 7
