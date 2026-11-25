@@ -219,7 +219,7 @@ chrome.storage.local.get(
 // Register header listener
 chrome.storage.local.get(['pdfInInline'], async (result) => {
   if (result.pdfInInline) {
-    await opalInline.enableOpalHeaderListener()
+    await opalInline.enableOpalHeaderListener().catch((err) => console.warn('Could not enable OPAL inline PDFs:', err))
   }
 })
 
